@@ -1,0 +1,25 @@
+# MetalLB address pool + L2 advertisement for the home LAN (10.0.0.0/24).
+# Pool must stay OUTSIDE the DHCP range (10.0.0.100-10.0.0.200)
+# and outside the Calico pod network (192.168.0.0/16).
+# IP assignments are tracked in README.md → "MetalLB IP Address Plan".
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: homelab-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 10.0.0.50-10.0.0.60
+  # Optional hardening: set to false so IPs are only handed to Services
+  # that request them explicitly (loadBalancerIP / annotation). Prevents
+  # a repeat of the accidental Wazuh allocations.
+  autoAssign: true
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: homelab-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - homelab-pool

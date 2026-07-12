@@ -1,0 +1,18 @@
+# Admin UI over the tailnet — same pattern as the observability stack:
+# applied with kubectl, not managed by Helm, so it survives chart upgrades.
+# → https://pihole-homelab.<tailnet>.ts.net/admin
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pihole-ingress
+  namespace: pihole
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: pihole-web        # created by the Helm chart
+      port:
+        number: 80
+  tls:
+    - hosts:
+        - pihole-homelab

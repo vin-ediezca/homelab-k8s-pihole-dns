@@ -1,0 +1,80 @@
+# Helm values for mojo2600/pihole (chart 2.37.0, Pi-hole v6 image).
+# Install:
+#   helm upgrade --install pihole mojo2600/pihole -n pihole -f pihole-values.yaml
+# Admin password comes from the pre-created Secret (see README Step 3).
+
+replicaCount: 1
+# RWO volume + FTL's SQLite DB => never let two pods overlap during an upgrade
+strategyType: Recreate
+
+image:
+  repository: pihole/pihole
+  tag: ""              # empty = the chart's tested appVersion (a v6 image)
+
+# Deterministic placement on the worker; local-path pins the PV here anyway.
+nodeSelector:
+  kubernetes.io/hostname: worker-1
+
+persistentVolumeClaim:
+  enabled: true
+  size: "2Gi"          # gravity.db + FTL history; plenty with maxDBdays capped
+  # storageClass omitted => default `local-path`
+
+serviceDns:
+  mixedService: true                    # one Service carrying TCP+UDP 53
+  type: LoadBalancer
+  loadBalancerIP: 10.0.0.53             # the network's DNS VIP. NEVER change after rollout.
+  externalTrafficPolicy: Local          # preserve client IPs in the query log
+  annotations:
+    metallb.universe.tf/allow-shared-ip: pihole-svc
+
+serviceWeb:
+  type: LoadBalancer
+  loadBalancerIP: 10.0.0.53             # same VIP, shared via the annotation
+  externalTrafficPolicy: Local
+  annotations:
+    metallb.universe.tf/allow-shared-ip: pihole-svc
+  http:
+    enabled: true
+  https:
+    enabled: true                       # FTL serves a self-signed cert on 443
+
+serviceDhcp:
+  enabled: false                        # DHCP stays on the Omada gateway
+
+admin:
+  enabled: true
+  existingSecret: pihole-admin
+  passwordKey: password
+
+# Upstream resolvers
+DNS1: "1.1.1.1"
+DNS2: "9.9.9.9"
+
+extraEnvVars:
+  TZ: "Asia/Manila"
+  # Required in Kubernetes: queries arrive on non-"local" virtual interfaces.
+  # Chart default — kept explicit so nobody removes it by accident.
+  FTLCONF_dns_listeningMode: "all"
+  # Cap FTL's long-term query DB (days) so the PVC can't fill up.
+  FTLCONF_database_maxDBdays: "91"
+  # NOTE (Pi-hole v6): anything set via FTLCONF_* is read-only in the web
+  # UI — this file is the single source of truth for those settings.
+
+# The pi-hole pod itself must not depend on pi-hole for DNS (bootstrap loop).
+podDnsConfig:
+  enabled: true
+  policy: "None"
+  nameservers:
+    - 127.0.0.1
+    - 1.1.1.1                           # escape hatch while FTL is starting
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+podDisruptionBudget:
+  enabled: false   # single replica — a PDB would only block node drains
