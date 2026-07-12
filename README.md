@@ -16,6 +16,10 @@ admin access over Tailscale.
 > | `10.0.0.53` | Pi-hole VIP | any free IP in your subnet, **outside the DHCP range** |
 > | `10.0.0.50–10.0.0.60` | MetalLB pool | a small reserved block, **outside the DHCP range** |
 > | `10.0.0.100–10.0.0.200` | router DHCP range | check your router |
+> | `worker-1`, `control-plane-1` | this cluster's worker / control-plane node names | your own — `kubectl get nodes`; the `nodeSelector` in `pihole-values.yaml` must match a real node |
+> | `Asia/Manila` | timezone (`TZ` in `pihole-values.yaml`) | your [TZ database name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) |
+> | `pihole-homelab` | Tailscale machine hostname | any name you like (edit `pihole-ts-ingress.yaml`) |
+> | Omada gateway | this homelab's router (TP-Link Omada) | any router — the only requirement is a configurable DHCP DNS server |
 >
 > One universal rule: the MetalLB pool must not overlap your router's
 > DHCP range **or** your cluster's pod/service CIDRs.

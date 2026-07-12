@@ -12,6 +12,8 @@ image:
   tag: ""              # empty = the chart's tested appVersion (a v6 image)
 
 # Deterministic placement on the worker; local-path pins the PV here anyway.
+# ADJUST: `worker-1` is this cluster's worker node — set to one of YOUR node
+# names (`kubectl get nodes`), or remove the block to let the scheduler pick.
 nodeSelector:
   kubernetes.io/hostname: worker-1
 
@@ -52,7 +54,7 @@ DNS1: "1.1.1.1"
 DNS2: "9.9.9.9"
 
 extraEnvVars:
-  TZ: "Asia/Manila"
+  TZ: "Asia/Manila"                     # ADJUST to your timezone
   # Required in Kubernetes: queries arrive on non-"local" virtual interfaces.
   # Chart default — kept explicit so nobody removes it by accident.
   FTLCONF_dns_listeningMode: "all"

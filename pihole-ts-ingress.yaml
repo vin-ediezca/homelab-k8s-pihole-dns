@@ -15,4 +15,4 @@ spec:
         number: 80
   tls:
     - hosts:
-        - pihole-homelab
+        - pihole-homelab      # ADJUST if you like — becomes <this>.<tailnet>.ts.net
