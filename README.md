@@ -128,16 +128,6 @@ MetalLB pool: **`10.0.0.50 – 10.0.0.60`** — outside the Omada DHCP range
 | `10.0.0.53` | **Pi-hole** (DNS + web, shared VIP) — never change after rollout |
 | `10.0.0.54 – 10.0.0.60` | free |
 
-> **History / cross-repo note:** the Wazuh services in
-> [homelab-k8s-wazuh-siem](https://github.com/vin-ediezca/homelab-k8s-wazuh-siem)
-> originally carried `type: LoadBalancer` from the upstream manifests. The
-> moment MetalLB was installed with `autoAssign: true`, it swept those
-> long-pending services and allocated `10.0.0.50–.53`, colliding with
-> Pi-hole's requested VIP (`AllocationFailed: address also in use by
-> wazuh/wazuh-workers`). Fix: those services were converted to `ClusterIP`
-> in the Wazuh repo (all Wazuh access goes through Tailscale anyway).
-> Keep this table updated when adding LoadBalancer services.
-
 ---
 
 ## Prerequisites
