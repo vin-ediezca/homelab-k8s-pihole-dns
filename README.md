@@ -16,7 +16,7 @@ admin access over Tailscale.
 > | `10.0.0.53` | Pi-hole VIP | any free IP in your subnet, **outside the DHCP range** |
 > | `10.0.0.50–10.0.0.60` | MetalLB pool | a small reserved block, **outside the DHCP range** |
 > | `10.0.0.100–10.0.0.200` | router DHCP range | check your router |
-> | `worker-1`, `control-plane-1` | this cluster's worker / control-plane node names | your own — `kubectl get nodes`; the `nodeSelector` in `pihole-values.yaml` must match a real node |
+> | `worker-1` | example name of the node Pi-hole is pinned to | one of your nodes from `kubectl get nodes` — goes in `pihole-values.local.yaml` (gitignored), **never** in the committed values; see [Upgrading safely](#upgrading-safely) |
 > | `Asia/Manila` | timezone (`TZ` in `pihole-values.yaml`) | your [TZ database name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) |
 > | `pihole-homelab` | Tailscale machine hostname | any name you like (edit `pihole-ts-ingress.yaml`) |
 > | Omada gateway | this homelab's router (TP-Link Omada) | any router — the only requirement is a configurable DHCP DNS server |
@@ -72,7 +72,8 @@ Home LAN 10.0.0.0/24
   per-client rate limit throttling the whole network as one client).
 - One replica with `strategyType: Recreate` — FTL owns a SQLite database
   on the PVC, and two instances writing it concurrently would corrupt it.
-  The pod is pinned to `worker-1` because `local-path` volumes are node-local.
+  The pod always runs on the same node: `local-path` volumes are
+  node-local, so the PV carries a hard node affinity.
 - The Tailscale Kubernetes Operator provisions a proxy for
   `pihole-ingress`, exposing the admin UI at
   `https://pihole-homelab.<tailnet>.ts.net/admin` from anywhere on the
@@ -98,9 +99,11 @@ Home LAN 10.0.0.0/24
 ```
 pi-hole/
 ├── README.md
-├── metallb-config.yaml     ← IPAddressPool + L2Advertisement (kubectl apply)
-├── pihole-values.yaml      ← Helm values for mojo2600/pihole
-└── pihole-ts-ingress.yaml  ← Tailscale Ingress for the admin UI (kubectl apply)
+├── .gitignore                ← keeps *.local.yaml out of git
+├── metallb-config.yaml       ← IPAddressPool + L2Advertisement (kubectl apply)
+├── pihole-values.yaml        ← Helm values for mojo2600/pihole (generic, committed)
+├── pihole-values.local.yaml  ← YOUR cluster's overrides, e.g. node name (gitignored; you create it)
+└── pihole-ts-ingress.yaml    ← Tailscale Ingress for the admin UI (kubectl apply)
 ```
 
 ---
@@ -211,12 +214,30 @@ kubectl -n pihole create secret generic pihole-admin \
 
 ## Step 4 — Deploy Pi-hole
 
+Values specific to *your* cluster go in a local override file. It's
+gitignored, so the committed `pihole-values.yaml` stays generic. At
+minimum, pin the pod to one of your nodes (`kubectl get nodes`):
+
+```
+cat > pihole-values.local.yaml <<'EOF'
+nodeSelector:
+  kubernetes.io/hostname: worker-1   # ← replace with YOUR node name
+EOF
+```
+
+Then install with **both** files (the later file wins):
+
 ```
 helm upgrade --install pihole mojo2600/pihole \
   --namespace pihole \
   --values pihole-values.yaml \
+  --values pihole-values.local.yaml \
   --wait --timeout 5m
 ```
+
+> ⚠️ Pass both files on **every** future `helm upgrade` too. See
+> [Upgrading safely](#upgrading-safely) for why, and for what breaks if
+> you don't.
 
 Verify both Services hold the VIP:
 
@@ -241,7 +262,7 @@ inline comments):
 | Setting | Value | Why |
 | ------- | ----- | --- |
 | `strategyType` | `Recreate` | FTL's SQLite DB tolerates exactly one writer |
-| `nodeSelector` | `worker-1` | local-path PVs are node-local; placement is deterministic |
+| `nodeSelector` | *(unset — set in `pihole-values.local.yaml`)* | local-path PVs are node-local; the override makes first placement deterministic |
 | `serviceDns.mixedService` | `true` | TCP+UDP 53 on one Service/VIP |
 | `externalTrafficPolicy` | `Local` | real client IPs in the query log |
 | `serviceDhcp.enabled` | `false` | DHCP stays on the Omada gateway |
@@ -352,8 +373,11 @@ content. Score what *is* blocked at
 
 ```
 # Upgrade chart / image (expect a brief network-wide DNS blip — Recreate strategy)
+# ALWAYS pass both values files — see "Upgrading safely" below
 helm repo update
-helm upgrade pihole mojo2600/pihole -n pihole -f pihole-values.yaml
+helm upgrade pihole mojo2600/pihole -n pihole \
+  -f pihole-values.yaml -f pihole-values.local.yaml \
+  --wait --timeout 5m
 
 # Roll back a bad upgrade
 helm rollback pihole -n pihole
@@ -368,6 +392,42 @@ kubectl -n pihole logs deploy/pihole -f
 kubectl -n pihole exec deploy/pihole -- tar czf - /etc/pihole > pihole-backup-$(date +%F).tgz
 ```
 
+### Upgrading safely
+
+> ⚠️ **Read this before every `helm upgrade`.**
+>
+> `strategyType: Recreate` deletes the running Pi-hole pod **before** the
+> new one starts, so the whole LAN has no DNS for that window. If the new
+> pod can't start, the outage lasts until someone notices. The easiest
+> way to cause that is a `nodeSelector` naming a node that doesn't exist:
+> the new pod sits `Pending` indefinitely.
+
+1. **Real node names live only in `pihole-values.local.yaml`.** The
+   committed `pihole-values.yaml` has no active `nodeSelector`. Its
+   `worker-1` is a commented-out example, so don't uncomment it as-is.
+2. **Pass both files on every upgrade.** If the local file is forgotten,
+   Helm drops the `nodeSelector`. The pod still lands on the right node
+   (the PV's node affinity pins it), but the pod spec changes, so you get
+   an unneeded restart now and another when the file is added back.
+3. **Check the rendered node name before upgrading.** It must be the node
+   that holds the PVC:
+
+   ```
+   helm template pihole mojo2600/pihole \
+     -f pihole-values.yaml -f pihole-values.local.yaml \
+     | grep -A1 nodeSelector
+   # kubernetes.io/hostname: <a name listed by `kubectl get nodes`>
+
+   kubectl get pv -o custom-columns=CLAIM:.spec.claimRef.name,NODE:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0] \
+     | grep pihole
+   # pihole   <the same node name>
+   ```
+
+4. **If the pod is `Pending` after an upgrade**, restore DNS first and
+   investigate second: `helm rollback pihole -n pihole` brings back the
+   previous revision. Then fix the values and upgrade again. If the
+   cluster itself is the problem, use the escape hatch below.
+
 **Emergency escape hatch:** if the cluster will be down for a while,
 set the Omada LAN's DHCP DNS back to **Auto** — the network gets working
 (unfiltered) internet within a lease renewal. Flip back to Manual /
@@ -379,7 +439,7 @@ set the Omada LAN's DHCP DNS back to **Auto** — the network gets working
 | ----- | ------ |
 | Pod crash / OOM | kubelet restarts it in seconds; clients retry and barely notice |
 | `helm upgrade` | seconds-to-a-minute DNS blip (Recreate strategy) — do it at low-traffic times |
-| `worker-1` reboots | DNS down until the node returns (PVC is node-local) — minutes for a planned reboot; use the escape hatch for anything longer |
+| The Pi-hole node reboots | DNS down until the node returns (PVC is node-local) — minutes for a planned reboot; use the escape hatch for anything longer |
 | Control-plane down | Pi-hole keeps serving — the running pod doesn't need the API server |
 
 ---
@@ -388,7 +448,7 @@ set the Omada LAN's DHCP DNS back to **Auto** — the network gets working
 
 - **L2 mode, not BGP.** MetalLB BGP conflicts with Calico's BGP on this
   cluster, and the Omada gateway isn't a BGP peer anyway.
-- **The cluster nodes do NOT use Pi-hole for DNS.** If `control-plane-1`/`worker-1`
+- **The cluster nodes do NOT use Pi-hole for DNS.** If the nodes
   resolved through a Pi-hole running *on* them, a cold cluster boot would
   deadlock: nodes need DNS to pull images to start the pod that provides
   DNS. Node DNS stays on the router/public resolvers — which is also why
@@ -418,7 +478,7 @@ set the Omada LAN's DHCP DNS back to **Auto** — the network gets working
 | Client has right DNS but ads persist | Browser DoH / Android Private DNS / platform ads | See Client-Side Bypass Checklist |
 | Whole network slow, dashboard shows one mega-client | `externalTrafficPolicy` was switched to `Cluster` → SNAT + FTL rate limiting | Revert to `Local` |
 | Web UI toggle greyed out | Setting is env-var-controlled (v6 makes `FTLCONF_*` read-only in UI) | Change in `pihole-values.yaml`, `helm upgrade` |
-| Pod `Pending` | nodeSelector typo, or `worker-1` down with the PVC on it | `kubectl -n pihole describe pod` |
+| Pod `Pending` | `nodeSelector` names a node that doesn't exist (e.g. the `worker-1` example left in) or isn't the one holding the PVC (`volume node affinity conflict`), or that node is down | Right after an upgrade, `helm rollback pihole -n pihole` first, then `kubectl -n pihole describe pod`. See [Upgrading safely](#upgrading-safely) |
 
 ---
 

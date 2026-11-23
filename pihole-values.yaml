@@ -1,6 +1,7 @@
 # Helm values for mojo2600/pihole (chart 2.37.0, Pi-hole v6 image).
-# Install:
-#   helm upgrade --install pihole mojo2600/pihole -n pihole -f pihole-values.yaml
+# Install / upgrade — ALWAYS pass both files (README → "Upgrading safely"):
+#   helm upgrade --install pihole mojo2600/pihole -n pihole \
+#     -f pihole-values.yaml -f pihole-values.local.yaml
 # Admin password comes from the pre-created Secret (see README Step 3).
 
 replicaCount: 1
@@ -11,11 +12,16 @@ image:
   repository: pihole/pihole
   tag: ""              # empty = the chart's tested appVersion (a v6 image)
 
-# Deterministic placement on the worker; local-path pins the PV here anyway.
-# ADJUST: `worker-1` is this cluster's worker node — set to one of YOUR node
-# names (`kubectl get nodes`), or remove the block to let the scheduler pick.
-nodeSelector:
-  kubernetes.io/hostname: worker-1
+# Node placement — intentionally NOT set in this (committed, generic) file.
+# local-path PVs carry a hard node affinity, so once the PVC is bound the pod
+# can only run on that node anyway. To pick the node for the first install,
+# put YOUR node name (`kubectl get nodes`) in pihole-values.local.yaml
+# (gitignored), e.g.:
+#   nodeSelector:
+#     kubernetes.io/hostname: worker-1   # example name — replace it
+# WATCH OUT: never activate a nodeSelector here with a name that matches no
+# node. Recreate kills the running pod first, the new one stays Pending, and
+# the whole LAN loses DNS. See README → "Upgrading safely".
 
 persistentVolumeClaim:
   enabled: true
